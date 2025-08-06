@@ -1001,4 +1001,861 @@ public async Task<IEnumerable<Result>> ProcessAllAsync(IEnumerable<Input> inputs
 }
 ```
 
-This comprehensive guide demonstrates asynchronous programming patterns in C# with real-world examples that integrate with dependency injection, SQL Server operations, and REST API development. The examples show proper error handling, cancellation support, and performance optimization techniques. 
+This comprehensive guide demonstrates asynchronous programming patterns in C# with real-world examples that integrate with dependency injection, SQL Server operations, and REST API development. The examples show proper error handling, cancellation support, and performance optimization techniques.
+
+## 🧪 Automated Testing for Async Code
+
+### **Testing Async Methods with xUnit**
+
+```csharp
+public class AsyncExamplesTests
+{
+    private readonly AsyncExamples _asyncExamples;
+
+    public AsyncExamplesTests()
+    {
+        _asyncExamples = new AsyncExamples();
+    }
+
+    [Fact]
+    public async Task GetDataAsync_ReturnsExpectedResult()
+    {
+        // Act
+        var result = await _asyncExamples.GetDataAsync();
+
+        // Assert
+        result.Should().Be("Data retrieved successfully");
+    }
+
+    [Theory]
+    [InlineData(2, 3, 5)]
+    [InlineData(10, 5, 15)]
+    [InlineData(-1, 1, 0)]
+    public async Task CalculateAsync_ValidInputs_ReturnsCorrectSum(int a, int b, int expected)
+    {
+        // Act
+        var result = await _asyncExamples.CalculateAsync(a, b);
+
+        // Assert
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task GetDataWithRetryAsync_SucceedsOnFirstAttempt_ReturnsSuccess()
+    {
+        // Arrange
+        var retryHandler = new AsyncErrorHandling();
+
+        // Act
+        var result = await retryHandler.GetDataWithRetryAsync(maxRetries: 3);
+
+        // Assert
+        result.Should().Contain("Success on attempt");
+    }
+
+    [Fact]
+    public async Task GetDataWithRetryAsync_FailsMultipleTimes_ThrowsException()
+    {
+        // Arrange
+        var retryHandler = new AsyncErrorHandling();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            retryHandler.GetDataWithRetryAsync(maxRetries: 1));
+
+        exception.Message.Should().Contain("Failed after 1 attempts");
+    }
+}
+```
+
+### **Testing Database Operations with In-Memory Database**
+
+```csharp
+public class ContactRepositoryTests : IDisposable
+{
+    private readonly DbContextOptions<ContactDbContext> _options;
+    private readonly ContactDbContext _context;
+    private readonly ContactRepository _repository;
+
+    public ContactRepositoryTests()
+    {
+        _options = new DbContextOptionsBuilder<ContactDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+
+        _context = new ContactDbContext(_options);
+        _repository = new ContactRepository(_context);
+    }
+
+    [Fact]
+    public async Task GetAllContactsAsync_EmptyDatabase_ReturnsEmptyList()
+    {
+        // Act
+        var result = await _repository.GetAllContactsAsync();
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AddContactAsync_ValidContact_AddsToDatabase()
+    {
+        // Arrange
+        var contact = new Contact
+        {
+            Name = "John Doe",
+            Email = "john@example.com",
+            Phone = "555-0101",
+            Category = ContactCategory.Family
+        };
+
+        // Act
+        var result = await _repository.AddContactAsync(contact);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Id.Should().BeGreaterThan(0);
+        result.Name.Should().Be("John Doe");
+
+        // Verify it was actually saved
+        var savedContact = await _context.Contacts.FindAsync(result.Id);
+        savedContact.Should().NotBeNull();
+        savedContact!.Name.Should().Be("John Doe");
+    }
+
+    [Fact]
+    public async Task GetContactByIdAsync_ValidId_ReturnsContact()
+    {
+        // Arrange
+        var contact = new Contact
+        {
+            Name = "Jane Smith",
+            Email = "jane@example.com",
+            Category = ContactCategory.Work
+        };
+        await _repository.AddContactAsync(contact);
+
+        // Act
+        var result = await _repository.GetContactByIdAsync(contact.Id);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Name.Should().Be("Jane Smith");
+        result.Email.Should().Be("jane@example.com");
+    }
+
+    [Fact]
+    public async Task GetContactByIdAsync_InvalidId_ReturnsNull()
+    {
+        // Act
+        var result = await _repository.GetContactByIdAsync(999);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SearchContactsAsync_ValidSearchTerm_ReturnsMatchingContacts()
+    {
+        // Arrange
+        var contacts = new List<Contact>
+        {
+            new Contact { Name = "John Smith", Email = "john@example.com" },
+            new Contact { Name = "Jane Doe", Email = "jane@example.com" },
+            new Contact { Name = "Bob Johnson", Email = "bob@example.com" }
+        };
+
+        foreach (var contact in contacts)
+        {
+            await _repository.AddContactAsync(contact);
+        }
+
+        // Act
+        var results = await _repository.SearchContactsAsync("john");
+
+        // Assert
+        results.Should().HaveCount(2); // "John Smith" and "Bob Johnson"
+        results.Should().Contain(c => c.Name.Contains("John", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task UpdateContactAsync_ValidContact_UpdatesSuccessfully()
+    {
+        // Arrange
+        var contact = new Contact
+        {
+            Name = "Original Name",
+            Email = "original@example.com",
+            Category = ContactCategory.Family
+        };
+        await _repository.AddContactAsync(contact);
+
+        contact.Name = "Updated Name";
+        contact.Email = "updated@example.com";
+
+        // Act
+        var result = await _repository.UpdateContactAsync(contact);
+
+        // Assert
+        result.Name.Should().Be("Updated Name");
+        result.Email.Should().Be("updated@example.com");
+
+        // Verify it was actually updated in database
+        var updatedContact = await _context.Contacts.FindAsync(contact.Id);
+        updatedContact!.Name.Should().Be("Updated Name");
+    }
+
+    [Fact]
+    public async Task DeleteContactAsync_ValidId_RemovesFromDatabase()
+    {
+        // Arrange
+        var contact = new Contact
+        {
+            Name = "To Delete",
+            Email = "delete@example.com",
+            Category = ContactCategory.Other
+        };
+        await _repository.AddContactAsync(contact);
+        var contactId = contact.Id;
+
+        // Act
+        await _repository.DeleteContactAsync(contactId);
+
+        // Assert
+        var deletedContact = await _context.Contacts.FindAsync(contactId);
+        deletedContact.Should().BeNull();
+    }
+
+    public void Dispose()
+    {
+        _context.Database.EnsureDeleted();
+        _context.Dispose();
+    }
+}
+```
+
+### **Testing Service Layer with Mocked Dependencies**
+
+```csharp
+public class ContactServiceTests
+{
+    private readonly Mock<IContactRepository> _mockRepository;
+    private readonly Mock<ILogger<ContactService>> _mockLogger;
+    private readonly ContactService _service;
+
+    public ContactServiceTests()
+    {
+        _mockRepository = new Mock<IContactRepository>();
+        _mockLogger = new Mock<ILogger<ContactService>>();
+        _service = new ContactService(_mockRepository.Object, _mockLogger.Object);
+    }
+
+    [Fact]
+    public async Task GetAllContactsAsync_ValidData_ReturnsContacts()
+    {
+        // Arrange
+        var expectedContacts = new List<Contact>
+        {
+            new Contact { Id = 1, Name = "John Doe", Email = "john@example.com" },
+            new Contact { Id = 2, Name = "Jane Smith", Email = "jane@example.com" }
+        };
+
+        _mockRepository.Setup(r => r.GetAllContactsAsync())
+            .ReturnsAsync(expectedContacts);
+
+        // Act
+        var result = await _service.GetAllContactsAsync();
+
+        // Assert
+        result.Should().BeEquivalentTo(expectedContacts);
+        _mockRepository.Verify(r => r.GetAllContactsAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetContactByIdAsync_ValidId_ReturnsContact()
+    {
+        // Arrange
+        var expectedContact = new Contact
+        {
+            Id = 1,
+            Name = "John Doe",
+            Email = "john@example.com",
+            Category = ContactCategory.Family
+        };
+
+        _mockRepository.Setup(r => r.GetContactByIdAsync(1))
+            .ReturnsAsync(expectedContact);
+
+        // Act
+        var result = await _service.GetContactByIdAsync(1);
+
+        // Assert
+        result.Should().BeEquivalentTo(expectedContact);
+        _mockRepository.Verify(r => r.GetContactByIdAsync(1), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetContactByIdAsync_InvalidId_ThrowsArgumentException()
+    {
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _service.GetContactByIdAsync(0));
+
+        exception.ParamName.Should().Be("id");
+    }
+
+    [Fact]
+    public async Task CreateContactAsync_ValidRequest_CreatesContact()
+    {
+        // Arrange
+        var request = new CreateContactRequest
+        {
+            Name = "New Contact",
+            Email = "new@example.com",
+            Phone = "555-0101",
+            Category = ContactCategory.Work
+        };
+
+        var expectedContact = new Contact
+        {
+            Id = 1,
+            Name = request.Name,
+            Email = request.Email,
+            Phone = request.Phone,
+            Category = request.Category
+        };
+
+        _mockRepository.Setup(r => r.AddContactAsync(It.IsAny<Contact>()))
+            .ReturnsAsync(expectedContact);
+
+        // Act
+        var result = await _service.CreateContactAsync(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Name.Should().Be(request.Name);
+        result.Email.Should().Be(request.Email);
+        _mockRepository.Verify(r => r.AddContactAsync(It.IsAny<Contact>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateContactAsync_InvalidRequest_ThrowsArgumentException()
+    {
+        // Arrange
+        var request = new CreateContactRequest
+        {
+            Name = "", // Invalid
+            Email = "test@example.com"
+        };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _service.CreateContactAsync(request));
+
+        exception.ParamName.Should().Be("request.Name");
+    }
+
+    [Fact]
+    public async Task SearchContactsAsync_ValidTerm_ReturnsMatchingContacts()
+    {
+        // Arrange
+        var searchTerm = "john";
+        var expectedContacts = new List<Contact>
+        {
+            new Contact { Id = 1, Name = "John Doe", Email = "john@example.com" }
+        };
+
+        _mockRepository.Setup(r => r.SearchContactsAsync(searchTerm))
+            .ReturnsAsync(expectedContacts);
+
+        // Act
+        var result = await _service.SearchContactsAsync(searchTerm);
+
+        // Assert
+        result.Should().BeEquivalentTo(expectedContacts);
+        _mockRepository.Verify(r => r.SearchContactsAsync(searchTerm), Times.Once);
+    }
+
+    [Fact]
+    public async Task SearchContactsAsync_EmptyTerm_ReturnsEmptyList()
+    {
+        // Act
+        var result = await _service.SearchContactsAsync("");
+
+        // Assert
+        result.Should().BeEmpty();
+        _mockRepository.Verify(r => r.SearchContactsAsync(It.IsAny<string>()), Times.Never);
+    }
+}
+```
+
+### **Testing HTTP Client with Mocked HttpClient**
+
+```csharp
+public class WeatherApiClientTests
+{
+    private readonly Mock<ILogger<WeatherApiClient>> _mockLogger;
+    private readonly Mock<IConfiguration> _mockConfiguration;
+    private readonly HttpClient _httpClient;
+    private readonly WeatherApiClient _client;
+
+    public WeatherApiClientTests()
+    {
+        _mockLogger = new Mock<ILogger<WeatherApiClient>>();
+        _mockConfiguration = new Mock<IConfiguration>();
+        _httpClient = new HttpClient();
+        _client = new WeatherApiClient(_httpClient, _mockLogger.Object, _mockConfiguration.Object);
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_ValidResponse_ReturnsWeatherForecast()
+    {
+        // Arrange
+        var expectedResponse = new WeatherApiResponse
+        {
+            Current = new CurrentWeather
+            {
+                TempC = 25.0,
+                TempF = 77.0,
+                Condition = new WeatherCondition { Text = "Sunny" },
+                Humidity = 60,
+                WindKph = 15.0
+            }
+        };
+
+        var jsonResponse = JsonSerializer.Serialize(expectedResponse);
+        var mockHttpMessageHandler = new Mock<HttpMessageHandler>();
+        mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(jsonResponse)
+            });
+
+        var httpClient = new HttpClient(mockHttpMessageHandler.Object);
+        var client = new WeatherApiClient(httpClient, _mockLogger.Object, _mockConfiguration.Object);
+
+        // Act
+        var result = await client.GetWeatherAsync("New York");
+
+        // Assert
+        result.Should().NotBeNull();
+        result.TemperatureC.Should().Be(25.0);
+        result.TemperatureF.Should().Be(77.0);
+        result.Description.Should().Be("Sunny");
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_HttpError_ThrowsHttpRequestException()
+    {
+        // Arrange
+        var mockHttpMessageHandler = new Mock<HttpMessageHandler>();
+        mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.NotFound
+            });
+
+        var httpClient = new HttpClient(mockHttpMessageHandler.Object);
+        var client = new WeatherApiClient(httpClient, _mockLogger.Object, _mockConfiguration.Object);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.GetWeatherAsync("Invalid City"));
+
+        exception.Message.Should().Contain("404");
+    }
+
+    [Fact]
+    public async Task ConvertTemperatureAsync_ValidConversion_ReturnsCorrectResult()
+    {
+        // Act
+        var result = await _client.ConvertTemperatureAsync(25.0, "C", "F");
+
+        // Assert
+        result.Should().Be(77.0);
+    }
+
+    [Fact]
+    public async Task ConvertTemperatureAsync_InvalidConversion_ThrowsArgumentException()
+    {
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _client.ConvertTemperatureAsync(25.0, "C", "X"));
+
+        exception.Message.Should().Contain("Unsupported temperature conversion");
+    }
+}
+```
+
+### **Testing Parallel Processing**
+
+```csharp
+public class ParallelProcessingServiceTests
+{
+    private readonly Mock<ILogger<ParallelProcessingService>> _mockLogger;
+    private readonly ParallelProcessingService _service;
+
+    public ParallelProcessingServiceTests()
+    {
+        _mockLogger = new Mock<ILogger<ParallelProcessingService>>();
+        _service = new ParallelProcessingService(_mockLogger.Object);
+    }
+
+    [Fact]
+    public async Task ProcessDataParallelAsync_ValidData_ProcessesAllItems()
+    {
+        // Arrange
+        var dataItems = new List<RawData>
+        {
+            new RawData { Id = 1, Value = 10 },
+            new RawData { Id = 2, Value = 20 },
+            new RawData { Id = 3, Value = 30 }
+        };
+
+        // Act
+        var results = await _service.ProcessDataParallelAsync(dataItems);
+
+        // Assert
+        results.Should().HaveCount(3);
+        results.Should().OnlyContain(r => !r.IsError);
+        results.Should().Contain(r => r.Id == 1 && r.ProcessedValue == 20);
+        results.Should().Contain(r => r.Id == 2 && r.ProcessedValue == 40);
+        results.Should().Contain(r => r.Id == 3 && r.ProcessedValue == 60);
+    }
+
+    [Fact]
+    public async Task ProcessDataInBatchesAsync_ValidData_ProcessesInBatches()
+    {
+        // Arrange
+        var dataItems = Enumerable.Range(1, 25)
+            .Select(i => new RawData { Id = i, Value = i })
+            .ToList();
+
+        // Act
+        var result = await _service.ProcessDataInBatchesAsync(dataItems, batchSize: 10);
+
+        // Assert
+        result.TotalProcessed.Should().Be(25);
+        result.SuccessfulItems.Should().Be(25);
+        result.FailedItems.Should().Be(0);
+    }
+}
+```
+
+### **Testing Cancellation and Timeout**
+
+```csharp
+public class CancellableOperationsTests
+{
+    private readonly Mock<ILogger<CancellableOperations>> _mockLogger;
+    private readonly CancellableOperations _operations;
+
+    public CancellableOperationsTests()
+    {
+        _mockLogger = new Mock<ILogger<CancellableOperations>>();
+        _operations = new CancellableOperations(_mockLogger.Object);
+    }
+
+    [Fact]
+    public async Task LongRunningOperationAsync_NoCancellation_CompletesSuccessfully()
+    {
+        // Act
+        var result = await _operations.LongRunningOperationAsync();
+
+        // Assert
+        result.Should().Be("Operation completed successfully");
+    }
+
+    [Fact]
+    public async Task LongRunningOperationAsync_Cancelled_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(100));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            _operations.LongRunningOperationAsync(cts.Token));
+
+        exception.Should().BeOfType<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task OperationWithTimeoutAsync_TimeoutExceeded_ThrowsTimeoutException()
+    {
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
+            _operations.OperationWithTimeoutAsync(TimeSpan.FromMilliseconds(100)));
+
+        exception.Message.Should().Contain("timed out");
+    }
+
+    [Fact]
+    public async Task ProcessWithCancellationAsync_Cancelled_ThrowsOperationCanceledException()
+    {
+        // Arrange
+        var items = new[] { "item1", "item2", "item3" };
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(100));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            _operations.ProcessWithCancellationAsync(items, cts.Token));
+
+        exception.Should().BeOfType<OperationCanceledException>();
+    }
+}
+```
+
+### **Testing File Processing Service**
+
+```csharp
+public class FileProcessingServiceTests : IDisposable
+{
+    private readonly Mock<ILogger<FileProcessingService>> _mockLogger;
+    private readonly FileProcessingService _service;
+    private readonly string _testDirectory;
+
+    public FileProcessingServiceTests()
+    {
+        _mockLogger = new Mock<ILogger<FileProcessingService>>();
+        _service = new FileProcessingService(_mockLogger.Object);
+        _testDirectory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(_testDirectory);
+    }
+
+    [Fact]
+    public async Task AnalyzeFileAsync_ValidFile_ReturnsFileAnalysis()
+    {
+        // Arrange
+        var filePath = Path.Combine(_testDirectory, "test.txt");
+        var content = "This is a test file.\nIt has multiple lines.\nAnd some content.";
+        await File.WriteAllTextAsync(filePath, content);
+
+        // Act
+        var result = await _service.AnalyzeFileAsync(filePath);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.FilePath.Should().Be(filePath);
+        result.LineCount.Should().Be(3);
+        result.WordCount.Should().Be(10);
+        result.CharacterCount.Should().Be(content.Length);
+        result.FileSize.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task AnalyzeFileAsync_FileNotFound_ThrowsFileNotFoundException()
+    {
+        // Arrange
+        var nonExistentFile = Path.Combine(_testDirectory, "nonexistent.txt");
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            _service.AnalyzeFileAsync(nonExistentFile));
+
+        exception.FileName.Should().Be(nonExistentFile);
+    }
+
+    [Fact]
+    public async Task ProcessFilesAsync_MultipleFiles_ProcessesAllFiles()
+    {
+        // Arrange
+        var files = new List<string>();
+        for (int i = 1; i <= 3; i++)
+        {
+            var filePath = Path.Combine(_testDirectory, $"file{i}.txt");
+            await File.WriteAllTextAsync(filePath, $"Content for file {i}");
+            files.Add(filePath);
+        }
+
+        // Act
+        var result = await _service.ProcessFilesAsync(files);
+
+        // Assert
+        result.TotalFiles.Should().Be(3);
+        result.ProcessedFiles.Should().Be(3);
+        result.FailedFiles.Should().Be(0);
+        result.FileAnalyses.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task GetFileListAsync_ValidDirectory_ReturnsFileList()
+    {
+        // Arrange
+        var files = new List<string>();
+        for (int i = 1; i <= 3; i++)
+        {
+            var filePath = Path.Combine(_testDirectory, $"file{i}.txt");
+            await File.WriteAllTextAsync(filePath, $"Content for file {i}");
+            files.Add(filePath);
+        }
+
+        // Act
+        var result = await _service.GetFileListAsync(_testDirectory);
+
+        // Assert
+        result.Should().HaveCount(3);
+        result.Should().Contain(f => f.Name == "file1.txt");
+        result.Should().Contain(f => f.Name == "file2.txt");
+        result.Should().Contain(f => f.Name == "file3.txt");
+    }
+
+    [Fact]
+    public async Task GetFileListAsync_InvalidDirectory_ThrowsDirectoryNotFoundException()
+    {
+        // Arrange
+        var invalidDirectory = Path.Combine(_testDirectory, "nonexistent");
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<DirectoryNotFoundException>(() =>
+            _service.GetFileListAsync(invalidDirectory));
+
+        exception.Message.Should().Contain("Directory not found");
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_testDirectory))
+        {
+            Directory.Delete(_testDirectory, true);
+        }
+    }
+}
+```
+
+### **Integration Tests with Testcontainers**
+
+```csharp
+public class ContactRepositoryIntegrationTests : IAsyncDisposable
+{
+    private readonly MsSqlContainer _container;
+    private readonly ContactDbContext _context;
+    private readonly ContactRepository _repository;
+
+    public ContactRepositoryIntegrationTests()
+    {
+        _container = new MsSqlBuilder()
+            .WithImage("mcr.microsoft.com/mssql/server:2019-latest")
+            .WithPassword("Your_password123!")
+            .Build();
+
+        _container.StartAsync().Wait();
+
+        var options = new DbContextOptionsBuilder<ContactDbContext>()
+            .UseSqlServer(_container.GetConnectionString())
+            .Options;
+
+        _context = new ContactDbContext(options);
+        _context.Database.EnsureCreated();
+        _repository = new ContactRepository(_context);
+    }
+
+    [Fact]
+    public async Task AddContactAsync_WithRealDatabase_SavesCorrectly()
+    {
+        // Arrange
+        var contact = new Contact
+        {
+            Name = "Integration Test",
+            Email = "integration@test.com",
+            Category = ContactCategory.Work
+        };
+
+        // Act
+        var result = await _repository.AddContactAsync(contact);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Id.Should().BeGreaterThan(0);
+
+        // Verify it was actually saved to the database
+        var savedContact = await _context.Contacts.FindAsync(result.Id);
+        savedContact.Should().NotBeNull();
+        savedContact!.Name.Should().Be("Integration Test");
+    }
+
+    [Fact]
+    public async Task SearchContactsAsync_WithRealDatabase_ReturnsMatchingContacts()
+    {
+        // Arrange
+        var contacts = new List<Contact>
+        {
+            new Contact { Name = "John Smith", Email = "john@example.com" },
+            new Contact { Name = "Jane Doe", Email = "jane@example.com" },
+            new Contact { Name = "Bob Johnson", Email = "bob@example.com" }
+        };
+
+        foreach (var contact in contacts)
+        {
+            await _repository.AddContactAsync(contact);
+        }
+
+        // Act
+        var results = await _repository.SearchContactsAsync("john");
+
+        // Assert
+        results.Should().HaveCount(2); // "John Smith" and "Bob Johnson"
+        results.Should().Contain(c => c.Name.Contains("John", StringComparison.OrdinalIgnoreCase));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _context.DisposeAsync();
+        await _container.DisposeAsync();
+    }
+}
+```
+
+### **Test Configuration and Setup**
+
+```xml
+<!-- YourProject.Tests.csproj -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.6.6" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.6" />
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Moq" Version="4.20.70" />
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.0" />
+    <PackageReference Include="Testcontainers.MsSql" Version="3.7.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\YourProject\YourProject.csproj" />
+  </ItemGroup>
+
+</Project>
+```
+
+### **Running Async Tests**
+
+```bash
+# Run all async tests
+dotnet test --filter "Category=Async"
+
+# Run tests with coverage
+dotnet test --collect:"XPlat Code Coverage"
+
+# Run specific test class
+dotnet test --filter "FullyQualifiedName~ContactRepositoryTests"
+
+# Run tests in parallel
+dotnet test --maxcpucount:4
+```
+
+This comprehensive testing section provides complete coverage for all the async programming examples, including unit tests, integration tests, and real-world testing scenarios with proper mocking, error handling, and database testing. 
